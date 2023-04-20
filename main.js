@@ -1,6 +1,5 @@
 const http = require("http");
 const express = require("express");
-const fs = require('fs');
 const app = express();
 
 app.use(express.static("public"));
@@ -15,49 +14,55 @@ let keepAliveId;
 const wss =
   process.env.NODE_ENV === "production"
     ? new WebSocket.Server({ server })
-    : new WebSocket.Server({ port: 3001 });
+    : new WebSocket.Server({ port: 5001 });
 
 server.listen(serverPort);
 console.log(`Server started on port ${serverPort} in stage ${process.env.NODE_ENV}`);
 
 wss.on("connection", function (ws, req) {
-  console.log('WebSocket connection established');
+  console.log("Connection Opened");
+  console.log("Client size: ", wss.clients.size);
 
-    clients.add(ws);
-    function SendMessages() {
-        messages.slice(-100).forEach((message) => {
-            ws.send(JSON.stringify(message));
-        });
+  if (wss.clients.size === 1) {
+    console.log("first connection. starting keepalive");
+    keepServerAlive();
+  }
+
+  ws.on("message", (data) => {
+    let stringifiedData = data.toString();
+    if (stringifiedData === 'pong') {
+      console.log('keepAlive');
+      return;
     }
-    setTimeout(SendMessages, 500);
+    broadcast(ws, stringifiedData, false);
+  });
 
-    ws.on('message', (message) => {
-        try {
-            const json = JSON.parse(message);
-            console.log('Received message:', json);
-            messages.push(json);
-            if (messages.length > 100) {
-                messages.shift();
-            }
-            broadcast(json);
-        } catch (error) {
-            console.error('Invalid message:', message);
-        }
-    });
+  ws.on("close", (data) => {
+    console.log("closing connection");
 
-    ws.on('close', () => {
-        console.log('WebSocket connection closed');
-        clients.delete(ws);
-    });
+    if (wss.clients.size === 0) {
+      console.log("last client disconnected, stopping keepAlive interval");
+      clearInterval(keepAliveId);
+    }
+  });
 });
 
-
-function broadcast(message) {
-  const json = JSON.stringify(message);
-  clients.forEach((socket) => {
-      socket.send(json);
-  });
-}
+// Implement broadcast function because of ws doesn't have it
+const broadcast = (ws, message, includeSelf) => {
+  if (includeSelf) {
+    wss.clients.forEach((client) => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(message);
+      }
+    });
+  } else {
+    wss.clients.forEach((client) => {
+      if (client !== ws && client.readyState === WebSocket.OPEN) {
+        client.send(message);
+      }
+    });
+  }
+};
 
 /**
  * Sends a ping message to all connected clients every 50 seconds
